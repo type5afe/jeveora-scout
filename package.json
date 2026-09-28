@@ -1,0 +1,24 @@
+{
+  "name": "meteora-scout",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Personal CLI dashboard that scans Meteora DLMM and DAMM v2 pools and flags entries using Jev",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "node src/index.ts",
+    "once": "node src/index.ts --once",
+    "typecheck": "tsc",
+    "test-discord": "node src/index.ts --test-discord"
+  },
+  "dependencies": {
+    "@typesafe-ai/sdk": "0.6.0",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.3",
+    "typescript": "7.0.2"
+  }
+}
