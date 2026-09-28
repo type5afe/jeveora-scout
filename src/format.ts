@@ -37,6 +37,11 @@ export function age(ms: number): string {
   return `${(min / 1440).toFixed(1)}d`;
 }
 
+export function errorText(err: unknown): string {
+  if (err instanceof Error) return err.name === "TimeoutError" ? "request timed out" : err.message;
+  return String(err);
+}
+
 export function clock(ts: number): string {
   return new Date(ts).toLocaleTimeString("en-GB", { hour12: false });
 }

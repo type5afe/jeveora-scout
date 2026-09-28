@@ -7,15 +7,16 @@ npm install
 copy .env.example .env     # then put your TYPESAFE_API_KEY in .env
 npm start                  # live dashboard, Ctrl+C to quit
 npm run once               # print one snapshot and exit
+npm run evaluate           # how Jev's entry calls have turned out so far
 ```
 
 Needs Node 24+ (it runs the TypeScript directly, no build step).
 
 ## How it decides
 
-1. **Pools.** The top 50 pools per venue by fees earned vs TVL in the last hour, from Meteora's data API.
+1. **Pools.** The top 50 pools per venue by fees earned vs TVL over the last 4 hours (`RANK_WINDOW`), from Meteora's data API. Ranking by the last hour mostly finds tokens that are pumping right now.
 2. **Hard filters, in code.** SOL or USDC quote (checked by mint), minimum TVL, volume, fees and pool age, mint and freeze authority disabled, enough holders, top holders under the limit. Missing data counts as a fail. Jev can't override these.
-3. **Jev.** Gets pre-computed, labeled numbers (never the token's name or symbol, which the creator controls) and answers: should an LP enter now, how likely is a rug, what's the price regime, and for DLMM, which liquidity shape fits.
+3. **Jev.** Gets pre-computed, labeled numbers (never the token's name or symbol, which the creator controls) and answers: if an LP put in SOL or USDC now and pulled out after 4 hours, would the fees outweigh a falling price; how likely is a rug; what's the price regime; and for DLMM, which liquidity shape fits.
 4. **Signals.**
    - `● Entry opportunity found`: Jev says enter, but its confidence is below `MIN_CONFIDENCE`.
    - `▶ ENTRY NOW`: Jev says enter, confidence ≥ `MIN_CONFIDENCE`, and rug score ≤ `MAX_RUG`. Rings the terminal bell.
@@ -67,7 +68,7 @@ Day to day:
 
 - See the dashboard: `ssh you@your-vps`, then `tmux attach -t scout`. Leave it running with **Ctrl+B, then D**.
 - Stop it: `tmux kill-session -t scout`.
-- Update the code: stop it, copy `src` again with `scp`, run `./scripts/vps-start.sh`.
+- Update the code: stop it, copy `src` and `package.json` again with `scp`, run `./scripts/vps-start.sh`.
 
 Only one copy runs per machine; a second one refuses to start. Stop the copy on your PC while the VPS runs it, or every Discord alert arrives twice. After a restart the alert list comes back from `logs/alerts.jsonl`, and alerts still in their cooldown aren't sent again.
 
@@ -75,9 +76,20 @@ The VPS clock is usually UTC. Set `TZ` in `.env` (for example `TZ=Asia/Jakarta`)
 
 ## Logs
 
-- `logs/decisions.jsonl`: every Jev entry answer, with the exact state it saw and what the rules would have said. This is the data for judging whether Jev beats the rules.
+- `logs/decisions.jsonl`: every Jev entry answer, with the exact state it saw, the pool's price, and what the rules would have said.
+- `logs/outcomes.jsonl`: what happened 1h, 4h and 24h after each of those answers: the price move, the fees the pool earned, and the resulting LP return.
 - `logs/positions.jsonl`: every Jev answer about your open positions.
 - `logs/alerts.jsonl`: every alert.
+
+## Is Jev any good?
+
+`npm run evaluate` groups the outcomes by Jev's answer, and by what the rules said, and shows how an LP would have done after 1h, 4h and 24h: the average and median return, and how often it came out ahead.
+
+The return is a yardstick, not your real PnL: what a 50/50 full-range position would have made in SOL or USDC terms, fees included. A DLMM position earns more fees while in range and loses more when the price runs away, but every answer is measured the same way, so the comparison is fair.
+
+- Checks only happen while the scout runs. One that comes due while it's down is still made after a restart if it's less than 10% of its window late (6 minutes for the 1h check), and dropped otherwise, because Meteora's fee numbers cover a rolling window.
+- Jev is asked about each watched pool every few minutes and tends to give the same answer, so many calls come from a few pools. The `pools` column is the better guide to how much evidence there is.
+- The report only uses the current wording of the entry question. Decisions logged before this version have no price, so they get no outcomes.
 
 ## Tuning
 

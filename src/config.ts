@@ -41,6 +41,8 @@ const Env = z.object({
 
   VENUES: list(["dlmm", "dammv2"]).default(["dlmm", "dammv2"]),
   QUOTES: list(["SOL", "USDC"]).default(["SOL", "USDC"]),
+  /** Which window's fees vs TVL ranks the pools. The last hour mostly finds tokens that are pumping right now. */
+  RANK_WINDOW: z.enum(["1h", "4h", "24h"]).default("4h"),
   MIN_TVL_USD: z.coerce.number().min(0).default(10_000),
   MIN_VOLUME_1H_USD: z.coerce.number().min(0).default(20_000),
   MIN_FEE_TVL_1H_PCT: z.coerce.number().min(0).default(0.2),

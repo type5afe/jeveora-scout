@@ -11,14 +11,27 @@ const market = {
   rug: noul("This token shows signs of a rug pull, a coordinated dump, or liquidity being pulled"),
 };
 
+/** How long the entry question assumes the LP stays in. */
+export const ENTRY_HOURS = 4;
+
+/**
+ * Bump whenever the entry question changes, so outcomes are only compared within one wording.
+ * v1 asked whether the token "looks stable enough"; on the high-fee pools the scout watches, Jev never said enter_now.
+ */
+export const ENTRY_PROMPT = 2;
+
 const entryQuestions = {
   ...market,
-  entry: choice("Should a liquidity provider open a position in this pool right now?", {
-    enter_now: "Fees are strong, trading is healthy, and the token looks stable enough to provide liquidity now",
-    wait: "Promising, but conditions are not good enough yet",
-    avoid: "Conditions are bad for liquidity providers",
-    unclear: "There is no clear signal either way",
-  }),
+  entry: choice(
+    `A liquidity provider funds a position in this pool with the quote token now and withdraws after ${ENTRY_HOURS} hours. ` +
+      "Will the fees they earn outweigh any loss from the token's price falling, so they end up with more of the quote token than they put in?",
+    {
+      enter_now: "Yes, most likely: the fees should outweigh the likely price damage. Volatility is fine when the fees pay for it",
+      wait: "It could get there soon, but not right now",
+      avoid: "No, most likely: a price drop or a dump would cost more than the fees earn",
+      unclear: "There is no clear signal either way",
+    },
+  ),
 };
 
 const dlmmEntryQuestions = {

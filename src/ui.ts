@@ -193,7 +193,11 @@ export function render(scout: Scout, now: number, nextScanAt: number | null): st
       : s("cyan", "starting…");
   const jev = scout.jev.client
     ? s("green", "● Jev on") +
-      s("dim", `  ${scout.jev.lastModel ?? scout.jev.model} · ${scout.jev.calls} calls · ~$${(scout.jev.inputTokens * JEV_USD_PER_TOKEN).toFixed(4)}`)
+      s(
+        "dim",
+        `  ${scout.jev.lastModel ?? scout.jev.model} · ${scout.jev.calls} calls · ~$${(scout.jev.inputTokens * JEV_USD_PER_TOKEN).toFixed(4)}` +
+          ` · outcomes ${scout.outcomes.logged} logged, ${scout.outcomes.pending} pending`,
+      )
     : s("yellow", "○ Jev off") + s("dim", "  rules only · add TYPESAFE_API_KEY to .env");
 
   const discord = scout.discord ? s("dim", ` · Discord ${scout.discord.sent} sent`) : "";

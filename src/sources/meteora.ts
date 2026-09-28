@@ -58,6 +58,8 @@ export interface Pool {
   url: string;
   base: { mint: string; symbol: string; holders: number | null; freezeAuthorityDisabled: boolean | null; marketCap: number | null };
   quote: Quote;
+  /** Price of the base token in the quote token; null if the API has none. */
+  price: number | null;
   tvl: number;
   createdAt: number;
   volume: Windows;
@@ -65,6 +67,8 @@ export interface Pool {
   /** Fees earned as a percentage of TVL, per window. */
   feeTvlPct: Windows;
   baseFeePct: number;
+  /** DLMM only: the extra fee charged on top of the base fee while the price is volatile. */
+  dynamicFeePct: number | null;
   binStep: number | null;
   feeSchedulerActive: boolean | null;
   permanentLockUsd: number | null;
@@ -90,12 +94,15 @@ function normalize(venue: Venue, p: z.infer<typeof ApiPool>): Pool | null {
       marketCap: base.market_cap ?? null,
     },
     quote,
+    // The API prices token x in token y.
+    price: p.current_price > 0 ? (base === p.token_x ? p.current_price : 1 / p.current_price) : null,
     tvl: p.tvl,
     createdAt: p.created_at,
     volume: p.volume,
     fees: p.fees,
     feeTvlPct: p.fee_tvl_ratio,
     baseFeePct: p.pool_config.base_fee_pct,
+    dynamicFeePct: p.dynamic_fee_pct ?? null,
     binStep: p.pool_config.bin_step ?? null,
     feeSchedulerActive: p.pool_config.is_fee_scheduler_active ?? null,
     permanentLockUsd: p.permanent_lock_liquidity ?? null,
@@ -110,11 +117,11 @@ export async function fetchPool(venue: Venue, address: string): Promise<Pool | n
   return normalize(venue, ApiPool.parse(await res.json()));
 }
 
-/** Top pools on one venue by fee/TVL over the last hour, pre-filtered by TVL and volume on the server. */
+/** Top pools on one venue by fee/TVL over `RANK_WINDOW`, pre-filtered by TVL and volume on the server. */
 export async function fetchPools(venue: Venue, cfg: Config, pageSize = 50): Promise<Pool[]> {
   const params = new URLSearchParams({
     page_size: String(pageSize),
-    sort_by: "fee_tvl_ratio_1h:desc",
+    sort_by: `fee_tvl_ratio_${cfg.RANK_WINDOW}:desc`,
     filter_by: `tvl>=${cfg.MIN_TVL_USD} && volume_1h>=${cfg.MIN_VOLUME_1H_USD}`,
   });
   const res = await fetch(`${API[venue]}/pools?${params}`, { signal: AbortSignal.timeout(15_000) });

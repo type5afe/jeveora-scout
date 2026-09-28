@@ -1,9 +1,10 @@
-import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { z } from "zod";
 import type { Config } from "./config.ts";
 import { Discord } from "./discord.ts";
-import { pct, regime, safeSymbol, usd } from "./format.ts";
-import { Jev, type JevVerdict, type PositionVerdict } from "./jev.ts";
+import { errorText, pct, regime, safeSymbol, usd } from "./format.ts";
+import { ENTRY_PROMPT, Jev, type JevVerdict, type PositionVerdict } from "./jev.ts";
+import { appendLog, readLogBackwards } from "./log.ts";
+import { Outcomes } from "./outcomes.ts";
 import { ruleVerdict, type RuleVerdict } from "./rules.ts";
 import { jevState, metrics, positionState, screenPool, screenToken, type Metrics } from "./screen.ts";
 import { fetchTokenStats, type TokenStats } from "./sources/jupiter.ts";
@@ -48,8 +49,6 @@ export interface ScanSummary {
   errors: string[];
 }
 
-const LOG_DIR = "logs";
-
 // What `#fire` writes to alerts.jsonl, as far as restoring after a restart needs it.
 const AlertRecord = z.object({
   at: z.number(),
@@ -65,6 +64,7 @@ export class Scout {
   readonly cfg: Config;
   readonly jev: Jev;
   readonly discord: Discord | null;
+  readonly outcomes: Outcomes;
   watching: Watch[] = [];
   positions: PositionView[] = [];
   portfolio: Omit<Portfolio, "positions"> | null = null;
@@ -79,6 +79,7 @@ export class Scout {
     this.cfg = cfg;
     this.jev = new Jev(cfg);
     this.discord = cfg.DISCORD_WEBHOOK_URL ? new Discord(cfg.DISCORD_WEBHOOK_URL) : null;
+    this.outcomes = new Outcomes(Date.now());
     this.#restore();
   }
 
@@ -87,24 +88,16 @@ export class Scout {
    * alerts that are still in their cooldown aren't sent to Discord again.
    */
   #restore(): void {
-    let text: string;
-    try {
-      text = readFileSync(`${LOG_DIR}/alerts.jsonl`, "utf8");
-    } catch {
-      return;
-    }
-    for (const line of text.trim().split("\n").slice(-100)) {
-      let parsed;
-      try {
-        parsed = AlertRecord.safeParse(JSON.parse(line));
-      } catch {
-        continue;
-      }
+    for (const raw of readLogBackwards("alerts.jsonl")) {
+      const parsed = AlertRecord.safeParse(raw);
       if (!parsed.success) continue;
       const { pool, position, ...alert } = parsed.data;
       const subject = position ?? pool;
-      if (subject) this.#lastFired.set(`${alert.kind}:${subject}`, alert.at);
-      this.alerts.unshift(alert);
+      const key = `${alert.kind}:${subject}`;
+      // Newest first, so the first alert seen for a subject is its latest.
+      if (subject && !this.#lastFired.has(key)) this.#lastFired.set(key, alert.at);
+      this.alerts.push(alert);
+      if (this.alerts.length === 100) break;
     }
   }
 
@@ -168,14 +161,19 @@ export class Scout {
         if (reason) reject(reason);
         return !reason;
       })
-      .sort((a, b) => b.feeTvlPct["1h"] - a.feeTvlPct["1h"])
+      .sort((a, b) => b.feeTvlPct[cfg.RANK_WINDOW] - a.feeTvlPct[cfg.RANK_WINDOW])
       .slice(0, cfg.MAX_WATCHING);
 
-    // 3. Jev on candidates and positions, then alerts.
-    await Promise.all([
+    // 3. Jev on candidates and positions, then alerts. Meanwhile, check back on earlier entry calls.
+    const listed = new Map([...pools, ...positionPools.values()].map((p) => [p.address, p]));
+    const [, , outcomeErrors] = await Promise.all([
       this.#watch(candidates, tokenStats, now),
       portfolio ? this.#track(portfolio, positionPools, tokenStats, now) : null,
+      this.outcomes.resolve(listed, now),
     ]);
+    if (outcomeErrors.length > 0) {
+      errors.push(`Outcomes: ${outcomeErrors.length} pool lookup(s) failed, retrying (${errorText(outcomeErrors[0])})`);
+    }
 
     this.lastScan = {
       at: now,
@@ -201,7 +199,19 @@ export class Scout {
           const fresh = await this.jev.ask(pool.venue, state);
           if (fresh) {
             jev = fresh;
-            this.#log("decisions.jsonl", { at: fresh.at, pool: pool.address, venue: pool.venue, state, jev: fresh, rules });
+            const decision = {
+              at: fresh.at,
+              pool: pool.address,
+              venue: pool.venue,
+              prompt: ENTRY_PROMPT,
+              price: pool.price,
+              tvl: pool.tvl,
+              state,
+              jev: fresh,
+              rules,
+            };
+            appendLog("decisions.jsonl", decision);
+            this.outcomes.track(decision);
           }
         }
 
@@ -240,7 +250,7 @@ export class Scout {
           const fresh = await this.jev.askPosition(state);
           if (fresh) {
             jev = fresh;
-            this.#log("positions.jsonl", { at: fresh.at, position: pos.address, pool: pos.pool, state, jev: fresh });
+            appendLog("positions.jsonl", { at: fresh.at, position: pos.address, pool: pos.pool, state, jev: fresh });
           }
         }
         return { pos, jev, signal: this.#positionSignal(jev, pos) };
@@ -324,23 +334,8 @@ export class Scout {
 
     this.alerts.unshift(alert);
     this.alerts.length = Math.min(this.alerts.length, 100);
-    this.#log("alerts.jsonl", { ...alert, ...extra });
+    appendLog("alerts.jsonl", { ...alert, ...extra });
     if (this.discord && this.cfg.DISCORD_ALERTS.includes(alert.kind)) this.discord.send(alert);
     if (alert.kind === "entry" || alert.kind === "exit") process.stdout.write("\x07");
   }
-
-  // Synchronous so nothing is lost when `--once` exits right after a scan.
-  #log(file: string, record: object): void {
-    try {
-      mkdirSync(LOG_DIR, { recursive: true });
-      appendFileSync(`${LOG_DIR}/${file}`, JSON.stringify(record) + "\n");
-    } catch {
-      // Logging must never take the dashboard down.
-    }
-  }
-}
-
-function errorText(err: unknown): string {
-  if (err instanceof Error) return err.name === "TimeoutError" ? "request timed out" : err.message;
-  return String(err);
 }

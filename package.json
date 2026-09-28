@@ -10,6 +10,7 @@
   "scripts": {
     "start": "node src/index.ts",
     "once": "node src/index.ts --once",
+    "evaluate": "node src/evaluate.ts",
     "typecheck": "tsc",
     "test-discord": "node src/index.ts --test-discord"
   },

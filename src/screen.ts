@@ -81,20 +81,38 @@ function band(v: number, cuts: [number, string][], last: string): string {
   return last;
 }
 
+/** Fees earned per hour, as a percentage of TVL. */
+const feeLevel = (perHour: number) => band(perHour, [[0.2, "low"], [0.5, "moderate"], [1, "high"]], "very high");
+
+/** Fees over a longer window, averaged per hour so Jev can set them against the last hour. */
+function feeWindow(total: number, windowH: number, ageH: number): string {
+  const hours = Math.max(0.25, Math.min(windowH, ageH));
+  const life = ageH < windowH ? `, over the pool's whole ${age(hours * 3_600_000)} life` : "";
+  return `${pct(total, 2)} of TVL${life}, ${pct(total / hours, 2)} per hour on average (${feeLevel(total / hours)})`;
+}
+
 export function jevState(pool: Pool, stats: TokenStats | undefined, m: Metrics, now: number): Record<string, string> {
+  const baseFee = `base fee ${pct(pool.baseFeePct, 2)}`;
   const venue =
     pool.venue === "dlmm"
-      ? `Meteora DLMM (concentrated liquidity in bins), bin step ${pool.binStep ?? "?"}, base fee ${pct(pool.baseFeePct, 2)}`
-      : `Meteora DAMM v2 (constant product), base fee ${pct(pool.baseFeePct, 2)}, ` +
+      ? `Meteora DLMM (concentrated liquidity in bins), bin step ${pool.binStep ?? "?"}, ` +
+        (pool.dynamicFeePct != null && pool.dynamicFeePct >= 0.01
+          ? `${baseFee}, ${pct(pool.baseFeePct + pool.dynamicFeePct, 2)} right now with the volatility fee`
+          : baseFee)
+      : `Meteora DAMM v2 (constant product), ${baseFee}, ` +
         (pool.feeSchedulerActive ? "fee scheduler active (fees decaying over time)" : "fixed fee");
 
+  const ageH = (now - pool.createdAt) / 3_600_000;
   const s1h = stats?.stats1h;
   const state: Record<string, string> = {
     pool_type: venue,
     quote_token: pool.quote,
     pool_age: age(now - pool.createdAt),
     tvl: `${usd(pool.tvl)} (${band(pool.tvl, [[25_000, "small"], [250_000, "medium"]], "large")})`,
-    fees_vs_tvl_last_hour: `${pct(m.feeTvl1hPct, 2)} of TVL (${band(m.feeTvl1hPct, [[0.2, "low"], [0.5, "moderate"], [1, "high"]], "very high")})`,
+    fees_vs_tvl_last_hour: `${pct(m.feeTvl1hPct, 2)} of TVL (${feeLevel(m.feeTvl1hPct)})`,
+    fees_vs_tvl_last_4h: feeWindow(pool.feeTvlPct["4h"], 4, ageH),
+    // For a pool under 4h old this would repeat the 4h line.
+    ...(ageH > 4 && { fees_vs_tvl_last_24h: feeWindow(pool.feeTvlPct["24h"], 24, ageH) }),
     volume_last_hour: `${usd(m.volume1h)}, ${m.volumeTrend.toFixed(1)}x the 24h hourly average (${band(m.volumeTrend, [[0.5, "falling fast"], [0.8, "falling"], [1.25, "steady"], [2, "rising"]], "surging")})`,
     price_change_5m: changeLabel(m.price5m),
     price_change_1h: changeLabel(m.price1h),
